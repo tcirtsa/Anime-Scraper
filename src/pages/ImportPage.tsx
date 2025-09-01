@@ -493,14 +493,7 @@ function ImportPage() {
       .replace(/\\/g, '＼');
   };
 
-  // 提取字幕文件的语言后缀, e.g., "file.sc.ass" -> "sc"
-  const extractSubtitleLanguage = (filename: string): string => {
-    const parts = filename.split('.');
-    if (parts.length >= 3) {
-      return parts[parts.length - 2];
-    }
-    return '';
-  };
+
 
   // 应用元数据到文件
   const applyMetadata = async (animeData: AniListResponse) => {
@@ -581,30 +574,29 @@ function ImportPage() {
 
     // 4. 处理所有附加文件 (字幕和音频)
     sidecarFiles.forEach(file => {
-      const language = extractSubtitleLanguage(file.name);
-      const originalBaseName = getBaseName(file.name);
+      const sidecarBaseName = getBaseName(file.name);
+      let bestMatch: { info: AnimeInfo, newBaseName: string, languageSuffix: string, videoBaseName: string } | null = null;
 
-      let videoBaseNameToMatch: string;
-      if (language) {
-        const suffixToRemove = `.${language}`;
-        if (originalBaseName.endsWith(suffixToRemove)) {
-          videoBaseNameToMatch = originalBaseName.slice(0, -suffixToRemove.length);
-        } else {
-          videoBaseNameToMatch = originalBaseName;
+      // 遍历所有视频文件，找到最长的前缀匹配
+      for (const [videoBaseName, videoData] of videoFileMap.entries()) {
+        if (sidecarBaseName.startsWith(videoBaseName)) {
+          const languageSuffix = sidecarBaseName.substring(videoBaseName.length);
+          
+          // 检查后缀是否合法 (为空，或以点开头)
+          if (languageSuffix === '' || languageSuffix.startsWith('.')) {
+            // 如果是第一个匹配，或者当前匹配比之前的匹配更长（更具体），则更新
+            if (!bestMatch || videoBaseName.length > bestMatch.videoBaseName.length) {
+                 bestMatch = { ...videoData, languageSuffix, videoBaseName };
+            }
+          }
         }
-      } else {
-        videoBaseNameToMatch = originalBaseName;
       }
-      
-      const videoMatch = videoFileMap.get(videoBaseNameToMatch);
 
-      if (videoMatch) {
-        const { info, newBaseName } = videoMatch;
+      if (bestMatch) {
+        const { info, newBaseName, languageSuffix } = bestMatch;
         
-        // 使用自动检测的后缀
-        const suffix = language ? `.${language}` : '';
-
-        const newFullName = `${newBaseName}${suffix}.${file.file_type}`;
+        // languageSuffix 已经是类似 ".sc" 的格式了
+        const newFullName = `${newBaseName}${languageSuffix}.${file.file_type}`;
         
         const originalIndex = updatedFiles.findIndex(f => f.path === file.path);
         if (originalIndex !== -1) {
