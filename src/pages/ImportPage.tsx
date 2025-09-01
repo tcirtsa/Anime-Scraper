@@ -725,6 +725,9 @@ function ImportPage() {
                 } else {
                   animeFolder = animeFolder.replace(/ {quarter}/g, "").replace(/{quarter}/g, "");
                 }
+
+                // Sanitize the generated folder name
+                animeFolder = sanitizeFilenameForWindows(animeFolder);
                 
                 targetPath = animeFolder;
                 
@@ -737,6 +740,10 @@ function ImportPage() {
                     .replace(/{season:03}/g, String(currentAnimeInfo.season ?? '').padStart(3, '0'))
                     .replace(/{year}/g, currentAnimeInfo.year?.toString() || "")
                     .replace(/{quarter}/g, currentAnimeInfo.quarter || "");
+                  
+                  // Sanitize the generated season folder name
+                  seasonFolder = sanitizeFilenameForWindows(seasonFolder);
+
                   targetPath += `/${seasonFolder}`;
                 }
                 
@@ -753,6 +760,10 @@ function ImportPage() {
                     .replace(/{season:03}/g, String(currentAnimeInfo.season ?? '').padStart(3, '0'))
                     .replace(/{year}/g, currentAnimeInfo.year?.toString() || "")
                     .replace(/{quarter}/g, currentAnimeInfo.quarter || "");
+
+                  // Sanitize the generated season folder name
+                  seasonFolder = sanitizeFilenameForWindows(seasonFolder);
+                  
                   targetPath = `${seasonFolder}/${file.new_name}`;
                 } else {
                   // 直接使用新文件名
