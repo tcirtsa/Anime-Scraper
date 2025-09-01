@@ -2,15 +2,18 @@ use serde::{Deserialize, Serialize};
 use tauri::command;
 use anyhow::Result;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AnimeInfo {
+    pub id: u32,
     pub title: String,
     pub title_romaji: Option<String>,
     pub title_english: Option<String>,
     pub episode: Option<u32>,
     pub season: Option<u32>,
     pub year: Option<u32>,
+    pub quarter: Option<String>,
     pub format: Option<String>,
+    pub episode_titles: Option<Vec<Option<String>>>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -24,7 +27,7 @@ pub struct ParsedFilename {
     pub audio_codec: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AniListResponse {
     pub id: u32,
     pub title: AniListTitle,
@@ -32,18 +35,38 @@ pub struct AniListResponse {
     pub episodes: Option<u32>,
     #[serde(rename = "seasonYear")]
     pub season_year: Option<u32>,
+    pub season: Option<String>,
+    #[serde(rename = "startDate")]
+    pub start_date: Option<AniListDate>,
     #[serde(rename = "coverImage")]
     pub cover_image: Option<AniListCoverImage>,
+    #[serde(rename = "streamingEpisodes")]
+    pub streaming_episodes: Option<Vec<StreamingEpisode>>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct StreamingEpisode {
+    pub title: Option<String>,
+    pub thumbnail: Option<String>,
+    pub url: Option<String>,
+    pub site: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct AniListDate {
+    pub year: Option<u32>,
+    pub month: Option<u32>,
+    pub day: Option<u32>,
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AniListTitle {
     pub romaji: Option<String>,
     pub english: Option<String>,
     pub native: Option<String>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct AniListCoverImage {
     pub large: Option<String>,
     pub medium: Option<String>,
@@ -131,9 +154,20 @@ pub async fn search_anilist(query: String) -> Result<Vec<AniListResponse>, Strin
                 format
                 episodes
                 seasonYear
+                season
+                startDate {
+                    year
+                    month
+                }
                 coverImage {
                     large
                     medium
+                }
+                streamingEpisodes {
+                    title
+                    thumbnail
+                    url
+                    site
                 }
             }
         }
@@ -199,6 +233,10 @@ pub async fn generate_filename(
     if let Some(year) = anime_info.year {
         filename = filename.replace("{year}", &year.to_string());
     }
+
+    if let Some(quarter) = &anime_info.quarter {
+        filename = filename.replace("{quarter}", quarter);
+    }
     
     Ok(filename)
 }
@@ -213,3 +251,58 @@ fn extract_anime_title(filename: &str) -> String {
 }
 
 // 这些函数已被anitomy-rs库替代，不再需要
+
+
+// Helper function to map season and month to a quarter string
+fn map_season_to_quarter(season: Option<&String>, month: Option<u32>) -> Option<String> {
+    if let Some(s) = season {
+        return Some(match s.to_uppercase().as_str() {
+            "WINTER" => "01".to_string(),
+            "SPRING" => "04".to_string(),
+            "SUMMER" => "07".to_string(),
+            "FALL" => "10".to_string(),
+            _ => return None,
+        });
+    }
+
+    if let Some(m) = month {
+        return Some(match m {
+            1..=3 => "01".to_string(),
+            4..=6 => "04".to_string(),
+            7..=9 => "07".to_string(),
+            10..=12 => "10".to_string(),
+            _ => return None,
+        });
+    }
+
+    None
+}
+
+#[command]
+pub async fn get_anime_details(anilist_data: AniListResponse) -> Result<AnimeInfo, String> {
+    let quarter = map_season_to_quarter(
+        anilist_data.season.as_ref(),
+        anilist_data.start_date.as_ref().and_then(|d| d.month)
+    );
+
+    let episode_titles = anilist_data.streaming_episodes.map(|episodes| {
+        episodes.into_iter().map(|ep| ep.title).collect()
+    });
+
+    let anime_info = AnimeInfo {
+        id: anilist_data.id,
+        title: anilist_data.title.native.clone().unwrap_or_else(||
+            anilist_data.title.romaji.clone().unwrap_or_default()
+        ),
+        title_romaji: anilist_data.title.romaji,
+        title_english: anilist_data.title.english,
+        episode: None, // Episode number is file-specific
+        season: None,  // Season number is file-specific
+        year: anilist_data.season_year,
+        quarter,
+        format: anilist_data.format,
+        episode_titles,
+    };
+
+    Ok(anime_info)
+}

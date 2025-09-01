@@ -17,7 +17,7 @@ const isDialogAvailable = () => {
 import { bytesToSize } from "../utils/formatters";
 import { Button } from "../components/ui/button";
 import { Progress } from "../components/ui/progress";
-import { Loader2, X, FileVideo, FileText, FolderOpen, Upload, Search, Info, Edit, Settings } from "lucide-react";
+import { Loader2, X, FileVideo, FileText, FolderOpen, Upload, Search, Info, Edit, Settings, FileMusic, File } from "lucide-react";
 import { toast } from "sonner";
 
 interface FileInfo {
@@ -27,6 +27,7 @@ interface FileInfo {
   file_type: string;
   is_video: boolean;
   is_subtitle: boolean;
+  is_audio: boolean;
   parsed?: ParsedFilename;
   metadata?: AnimeInfo;
   new_name?: string;
@@ -55,13 +56,17 @@ interface ParsedFilename {
 }
 
 interface AnimeInfo {
+  id: number;
   title: string;
   title_romaji?: string;
   title_english?: string;
   episode?: number;
   season?: number;
   year?: number;
+  quarter?: string;
   format?: string;
+  episode_titles?: (string | null)[];
+  episode_title?: string;
 }
 
 interface AniListResponse {
@@ -74,6 +79,11 @@ interface AniListResponse {
   format?: string;
   episodes?: number;
   season_year?: number;
+  season?: string;
+  start_date?: {
+    year?: number;
+    month?: number;
+  };
   cover_image?: {
     large?: string;
     medium?: string;
@@ -83,7 +93,6 @@ interface AniListResponse {
 interface AppConfig {
   output_directory: string;
   naming_template: string;
-  subtitle_template?: string;
   folder_template: string;
   season_folder_template: string;
   organize_by_season: boolean;
@@ -104,7 +113,6 @@ function ImportPage() {
   const [outputDir, setOutputDir] = useState<string | null>(null);
   const [processingProgress, setProcessingProgress] = useState(0);
   const [fileNameTemplate, setFileNameTemplate] = useState<string>("{title_romaji} - S{season}E{episode:02}");
-  const [subtitleSuffix, setSubtitleSuffix] = useState<string>(".chs");
   const [folderTemplate, setFolderTemplate] = useState<string>("{title_romaji} ({year})");
   const [seasonFolderTemplate, setSeasonFolderTemplate] = useState<string>("Season {season}");
   const [selectedAnimeId, setSelectedAnimeId] = useState<number | null>(null);
@@ -156,7 +164,6 @@ function ImportPage() {
     if (!isTauriAvailable()) {
       console.warn('Tauri API 不可用，使用默认配置');
       setFileNameTemplate("{title_romaji} - S{season}E{episode:02}");
-      setSubtitleSuffix(".chs");
       setFolderTemplate("{title_romaji} ({year})");
       setSeasonFolderTemplate("Season {season}");
       setOrganizeBySeasons(true);
@@ -167,15 +174,6 @@ function ImportPage() {
       const appConfig = await invoke<AppConfig>('load_config');
       setConfig(appConfig);
       setFileNameTemplate(appConfig.naming_template);
-      // 从完整的字幕模板中提取后缀部分
-      const subtitleTemplate = appConfig.subtitle_template || "{title_romaji} - S{season}E{episode:02}.chs";
-      const baseTemplate = appConfig.naming_template;
-      if (subtitleTemplate.includes(baseTemplate.replace(/\{ext\}$/, ''))) {
-        const suffix = subtitleTemplate.replace(baseTemplate.replace(/\{ext\}$/, ''), '');
-        setSubtitleSuffix(suffix || ".chs");
-      } else {
-        setSubtitleSuffix(".chs");
-      }
       setFolderTemplate(appConfig.folder_template);
       setSeasonFolderTemplate(appConfig.season_folder_template || "Season {season}");
       setOutputDir(appConfig.output_directory);
@@ -186,7 +184,6 @@ function ImportPage() {
       toast.error(`加载配置失败: ${error}`);
       // 使用默认配置
       setFileNameTemplate("{title_romaji} - S{season}E{episode:02}");
-      setSubtitleSuffix(".chs");
       setFolderTemplate("{title_romaji} ({year})");
       setSeasonFolderTemplate("Season {season}");
       setOrganizeBySeasons(true);
@@ -247,17 +244,18 @@ function ImportPage() {
       const selected = await open({
         multiple: true,
         filters: [
-          { name: '支持的文件', extensions: ['mkv', 'mp4', 'avi', 'mov', 'mka', 'ass', 'srt', 'vtt'] }
+          { name: '支持的文件', extensions: ['mkv', 'mp4', 'avi', 'mov', 'ass', 'srt', 'vtt', 'mka', 'flac', 'opus', 'aac'] }
         ]
       });
       console.log('文件选择结果:', selected);
       
       if (selected && Array.isArray(selected) && selected.length > 0) {
         const fileObjects: FileInfo[] = selected.map(path => {
-          const name = path.split(/[/\\]/).pop() || '';
+          const name = path.split(/[/\\\\]/).pop() || '';
           const extension = name.split('.').pop()?.toLowerCase() || '';
-          const is_video = ['mkv', 'mp4', 'avi', 'mov', 'mka'].includes(extension);
+          const is_video = ['mkv', 'mp4', 'avi', 'mov'].includes(extension);
           const is_subtitle = ['ass', 'srt', 'vtt'].includes(extension);
+          const is_audio = ['mka', 'flac', 'opus', 'aac'].includes(extension);
           
           return {
             path,
@@ -265,7 +263,8 @@ function ImportPage() {
             size: 0, // 文件大小将在后台获取
             file_type: extension,
             is_video,
-            is_subtitle
+            is_subtitle,
+            is_audio
           };
         });
         
@@ -287,10 +286,11 @@ function ImportPage() {
     
     for (const file of fileList) {
       const extension = file.name.split('.').pop()?.toLowerCase() || '';
-      const is_video = ['mkv', 'mp4', 'avi', 'mov', 'mka'].includes(extension);
+      const is_video = ['mkv', 'mp4', 'avi', 'mov'].includes(extension);
       const is_subtitle = ['ass', 'srt', 'vtt'].includes(extension);
+      const is_audio = ['mka', 'flac', 'opus', 'aac'].includes(extension);
       
-      if (is_video || is_subtitle) {
+      if (is_video || is_subtitle || is_audio) {
         // 确保获取完整路径
         const filePath = (file as any).path || '';
         if (!filePath) {
@@ -305,7 +305,8 @@ function ImportPage() {
           size: file.size,
           file_type: extension,
           is_video,
-          is_subtitle
+          is_subtitle,
+          is_audio
         });
       }
     }
@@ -446,7 +447,7 @@ function ImportPage() {
       
       if (results.length > 0) {
         setSelectedAnimeId(results[0].id);
-        applyMetadata(results[0]);
+        await applyMetadata(results[0]);
       }
       
       setShowMetadataPanel(true);
@@ -468,260 +469,187 @@ function ImportPage() {
     await searchAnimeMetadata(manualSearchQuery.trim());
   };
   
-  // 提取字幕文件的后缀（倒数第二个.到最后一个.之前的部分）
-  const extractSubtitleSuffix = (filename: string): string => {
+  // 提取文件名（不含扩展名）
+  const getBaseName = (filename: string) => {
+    const parts = filename.split('.');
+    if (parts.length > 1) {
+      return parts.slice(0, -1).join('.');
+    }
+    return filename;
+  };
+
+  // 替换Windows文件名中的非法字符为全角字符
+  const sanitizeFilenameForWindows = (name: string): string => {
+    return name
+      .replace(/:/g, '：')
+      .replace(/\?/g, '？')
+      .replace(/\*/g, '＊')
+      .replace(/"/g, '＂')
+      .replace(/</g, '＜')
+      .replace(/>/g, '＞')
+      .replace(/\|/g, '｜')
+      .replace(/\//g, '／')
+      .replace(/\\/g, '＼');
+  };
+
+  // 提取字幕文件的语言后缀, e.g., "file.sc.ass" -> "sc"
+  const extractSubtitleLanguage = (filename: string): string => {
     const parts = filename.split('.');
     if (parts.length >= 3) {
-      // 如果有至少3个部分（文件名.后缀.扩展名），返回倒数第二个部分
       return parts[parts.length - 2];
     }
-    return ''; // 没有后缀
+    return '';
   };
 
   // 应用元数据到文件
-  const applyMetadata = (animeData: AniListResponse) => {
+  const applyMetadata = async (animeData: AniListResponse) => {
+    if (!isTauriAvailable()) {
+      toast.error('元数据应用功能不可用');
+      return;
+    }
+
+    // 1. 从后端一次性获取所有详细信息，包括所有剧集标题
+    const animeInfoBase = await invoke<AnimeInfo>('get_anime_details', { anilistData: animeData });
+    
     const updatedFiles = [...files];
-    
-    // 分离视频文件和字幕文件，分别处理
-    const videoFiles = updatedFiles
-      .map((file, originalIndex) => ({ file, originalIndex }))
-      .filter(({ file }) => file.is_video)
-      .sort((a, b) => a.file.name.localeCompare(b.file.name));
-    
-    // 字幕文件按后缀分组，然后在每组内排序
-    const subtitleFiles = updatedFiles
-      .map((file, originalIndex) => ({ 
-        file, 
-        originalIndex,
-        suffix: extractSubtitleSuffix(file.name)
-      }))
-      .filter(({ file }) => file.is_subtitle);
-    
-    // 按后缀分组
-    const subtitleGroups = subtitleFiles.reduce((groups, item) => {
-      const suffix = item.suffix || 'default';
-      if (!groups[suffix]) {
-        groups[suffix] = [];
-      }
-      groups[suffix].push(item);
-      return groups;
-    }, {} as Record<string, typeof subtitleFiles>);
-    
-    // 对每组内的文件进行排序
-    Object.keys(subtitleGroups).forEach(suffix => {
-      subtitleGroups[suffix].sort((a, b) => a.file.name.localeCompare(b.file.name));
-    });
-    
-    // 处理视频文件
-    videoFiles.forEach(({ file, originalIndex }, sortedIndex) => {
-      // 按排序后的顺序分配集数（从1开始）
-      const episodeNumber = sortedIndex + 1;
-      
-      // 保留原有的技术信息（如果已解析）
-      let groupName: string | undefined;
-      let seasonNumber: number | undefined;
-      
-      if (file.parsed) {
-        groupName = file.parsed.group;
-        seasonNumber = file.parsed.season;
-      } else {
-        // 尝试从文件名中提取技术信息
-        const seasonMatch = file.name.match(/[Ss](\d+)/);
-        if (seasonMatch) {
-          seasonNumber = parseInt(seasonMatch[1]);
-        }
-        
-        // 尝试提取分辨率
-        const resolutionMatch = file.name.match(/(\d{3,4}[pP])/);
-        if (resolutionMatch) {
-        }
-        
-        // 尝试提取字幕组
-        const groupMatch = file.name.match(/\[([^\]]+)\]/);
-        if (groupMatch) {
-          groupName = groupMatch[1];
-        }
-      }
-      
+    const videoFiles = updatedFiles.filter(f => f.is_video).sort((a, b) => a.name.localeCompare(b.name));
+    const sidecarFiles = updatedFiles.filter(f => f.is_subtitle || f.is_audio);
+
+    // 2. 创建一个映射，用于根据视频文件的原始基本名称查找其新信息
+    const videoFileMap = new Map<string, { info: AnimeInfo, newBaseName: string }>();
+
+    // 3. 同步处理所有视频文件，因为数据已经获取
+    for (const [index, file] of videoFiles.entries()) {
+      // 优先使用 anitomy 解析出的集数和季数
+      const episodeNumber = file.parsed?.episode_number ?? (index + 1);
+      const seasonNumber = file.parsed?.season ?? 1;
+      const groupName = file.parsed?.group;
+
+      // 从已获取的列表中查找剧集标题
+      // anilist 的 episode_titles 数组是 0-indexed
+      const rawTitle = animeInfoBase.episode_titles?.[episodeNumber - 1] || '';
+      // 移除 "Episode X - " 前缀
+      const episodeTitle = rawTitle.replace(/^Episode\s*\d+\s*-\s*/, '');
+
       const animeInfo: AnimeInfo = {
-        title: animeData.title.romaji || animeData.title.english || animeData.title.native || "Unknown",
-        title_romaji: animeData.title.romaji,
-        title_english: animeData.title.english,
+        ...animeInfoBase,
         episode: episodeNumber,
-        season: seasonNumber || 1,
-        year: animeData.season_year,
-        format: animeData.format
+        season: seasonNumber,
+        episode_title: episodeTitle,
       };
-      
-      updatedFiles[originalIndex].metadata = animeInfo;
-      
+
       // 生成新文件名
-      let newName = fileNameTemplate;
-      newName = newName.replace("{title}", animeInfo.title);
-      newName = newName.replace("{title_romaji}", animeInfo.title_romaji || animeInfo.title);
-      newName = newName.replace("{title_english}", animeInfo.title_english || animeInfo.title);
-      newName = newName.replace("{episode}", episodeNumber.toString().padStart(2, '0'));
-      newName = newName.replace("{episode:02}", episodeNumber.toString().padStart(2, '0'));
-      newName = newName.replace("{episode:03}", episodeNumber.toString().padStart(3, '0'));
+      let newFullName = fileNameTemplate
+        .replace(/{title}/g, animeInfo.title)
+        .replace(/{title_romaji}/g, animeInfo.title_romaji || animeInfo.title)
+        .replace(/{title_english}/g, animeInfo.title_english || animeInfo.title)
+        .replace(/{episode}/g, episodeNumber.toString())
+        .replace(/{episode:02}/g, episodeNumber.toString().padStart(2, '0'))
+        .replace(/{episode:03}/g, episodeNumber.toString().padStart(3, '0'))
+        .replace(/{season}/g, seasonNumber.toString())
+        .replace(/{year}/g, animeInfo.year?.toString() || "")
+        .replace(/{quarter}/g, animeInfo.quarter || "")
+        .replace(/{group}/g, groupName || "")
+        .replace(/{episode_title}/g, animeInfo.episode_title || "")
+        .replace(/{ext}/g, file.file_type)
+        .replace(/\s+/g, ' ').trim();
       
-      if (seasonNumber) {
-        newName = newName.replace("{season}", seasonNumber.toString());
-      } else {
-        newName = newName.replace("{season}", "1");
+      // 移除未使用的占位符并清理空白
+      newFullName = newFullName.replace(/{[^}]+}/g, "").replace(/--/g, '-').replace(/  +/g, ' ').trim();
+
+      // 如果用户模板不包含 {ext}，则在末尾添加
+      if (!fileNameTemplate.includes('{ext}')) {
+        newFullName = `${newFullName}.${file.file_type}`;
       }
+
+      // 为Windows清理文件名
+      newFullName = sanitizeFilenameForWindows(newFullName);
+
+      const newBaseName = newFullName.substring(0, newFullName.lastIndexOf('.'));
       
-      if (animeInfo.year) {
-        newName = newName.replace("{year}", animeInfo.year.toString());
-      } else {
-        newName = newName.replace("{year}", "");
-      }
-      
-      // 添加字幕组信息
-      if (groupName) {
-        newName = newName.replace("{group}", groupName);
-      } else {
-        newName = newName.replace("{group}", "");
-      }
-      
-      // 清理模板中的空白部分
-      newName = newName.replace(/\s+/g, ' ').trim();
-      
-      // 添加文件扩展名
-      newName = newName.replace("{ext}", file.file_type);
-      if (!newName.endsWith(`.${file.file_type}`)) {
-        newName += `.${file.file_type}`;
-      }
-      
-      updatedFiles[originalIndex].new_name = newName;
-    });
-    
-    // 按后缀分组处理字幕文件
-    let subtitleProcessedCount = 0;
-    Object.keys(subtitleGroups).forEach(suffix => {
-      const groupFiles = subtitleGroups[suffix];
-      
-      groupFiles.forEach(({ file, originalIndex }, groupIndex) => {
-        // 在每个后缀组内按排序后的顺序分配集数（从1开始）
-        const episodeNumber = groupIndex + 1;
-        
-        // 保留原有的技术信息（如果已解析）
-        let groupName: string | undefined;
-        let seasonNumber: number | undefined;
-        
-        if (file.parsed) {
-          groupName = file.parsed.group;
-          seasonNumber = file.parsed.season;
-        } else {
-          // 尝试从文件名中提取技术信息
-          const seasonMatch = file.name.match(/[Ss](\d+)/);
-          if (seasonMatch) {
-            seasonNumber = parseInt(seasonMatch[1]);
-          }
-          
-          // 尝试提取字幕组
-          const groupMatch = file.name.match(/\[([^\]]+)\]/);
-          if (groupMatch) {
-            groupName = groupMatch[1];
-          }
-        }
-        
-        const animeInfo: AnimeInfo = {
-          title: animeData.title.romaji || animeData.title.english || animeData.title.native || "Unknown",
-          title_romaji: animeData.title.romaji,
-          title_english: animeData.title.english,
-          episode: episodeNumber,
-          season: seasonNumber || 1,
-          year: animeData.season_year,
-          format: animeData.format
-        };
-        
+      const originalIndex = updatedFiles.findIndex(f => f.path === file.path);
+      if (originalIndex !== -1) {
         updatedFiles[originalIndex].metadata = animeInfo;
-        
-        // 生成新文件名 - 使用视频模板加上字幕后缀
-        let newName = fileNameTemplate + subtitleSuffix;
-        newName = newName.replace("{title}", animeInfo.title);
-        newName = newName.replace("{title_romaji}", animeInfo.title_romaji || animeInfo.title);
-        newName = newName.replace("{title_english}", animeInfo.title_english || animeInfo.title);
-        newName = newName.replace("{episode}", episodeNumber.toString().padStart(2, '0'));
-        newName = newName.replace("{episode:02}", episodeNumber.toString().padStart(2, '0'));
-        newName = newName.replace("{episode:03}", episodeNumber.toString().padStart(3, '0'));
-        
-        if (seasonNumber) {
-          newName = newName.replace("{season}", seasonNumber.toString());
-        } else {
-          newName = newName.replace("{season}", "1");
-        }
-        
-        if (animeInfo.year) {
-          newName = newName.replace("{year}", animeInfo.year.toString());
-        } else {
-          newName = newName.replace("{year}", "");
-        }
-        
-        // 添加字幕组信息
-        if (groupName) {
-          newName = newName.replace("{group}", groupName);
-        } else {
-          newName = newName.replace("{group}", "");
-        }
-        
-        // 清理模板中的空白部分
-        newName = newName.replace(/\s+/g, ' ').trim();
-        
-        // 如果原文件有后缀，在扩展名前添加后缀
-        if (suffix && suffix !== 'default') {
-          // 在添加扩展名之前插入后缀
-          newName = newName.replace("{ext}", `${suffix}.{ext}`);
-        }
-        
-        // 添加文件扩展名
-        newName = newName.replace("{ext}", file.file_type);
-        if (!newName.endsWith(`.${file.file_type}`)) {
-          newName += `.${file.file_type}`;
-        }
-        
-        updatedFiles[originalIndex].new_name = newName;
-        subtitleProcessedCount++;
-      });
-    });
-    
-    setFiles(updatedFiles);
-    
-    // 提示用户重新排序的结果
-    const videoCount = videoFiles.length;
-    const subtitleCount = subtitleProcessedCount;
-    const suffixGroups = Object.keys(subtitleGroups).filter(suffix => suffix !== 'default');
-    let message = '';
-    
-    if (videoCount > 0) {
-      message += `视频文件已按文件名排序重新分配集数：第1集到第${videoCount}集`;
+        updatedFiles[originalIndex].new_name = newFullName;
+      }
+      
+      // 存储视频信息以供字幕匹配
+      const originalBaseName = getBaseName(file.name);
+      videoFileMap.set(originalBaseName, { info: animeInfo, newBaseName });
     }
-    
-    if (subtitleCount > 0) {
-      if (message) message += '；';
-      if (suffixGroups.length > 0) {
-        message += `字幕文件已按后缀分组处理：${suffixGroups.map(suffix => `${suffix}(${subtitleGroups[suffix].length}个)`).join('、')}`;
-        if (subtitleGroups['default'] && subtitleGroups['default'].length > 0) {
-          message += `、无后缀(${subtitleGroups['default'].length}个)`;
+
+    // 4. 处理所有附加文件 (字幕和音频)
+    sidecarFiles.forEach(file => {
+      const language = extractSubtitleLanguage(file.name);
+      const originalBaseName = getBaseName(file.name);
+
+      let videoBaseNameToMatch: string;
+      if (language) {
+        const suffixToRemove = `.${language}`;
+        if (originalBaseName.endsWith(suffixToRemove)) {
+          videoBaseNameToMatch = originalBaseName.slice(0, -suffixToRemove.length);
+        } else {
+          videoBaseNameToMatch = originalBaseName;
         }
       } else {
-        message += `字幕文件已按文件名排序重新分配集数：第1集到第${subtitleCount}集`;
+        videoBaseNameToMatch = originalBaseName;
       }
-    }
+      
+      const videoMatch = videoFileMap.get(videoBaseNameToMatch);
+
+      if (videoMatch) {
+        const { info, newBaseName } = videoMatch;
+        
+        // 使用自动检测的后缀
+        const suffix = language ? `.${language}` : '';
+
+        const newFullName = `${newBaseName}${suffix}.${file.file_type}`;
+        
+        const originalIndex = updatedFiles.findIndex(f => f.path === file.path);
+        if (originalIndex !== -1) {
+          updatedFiles[originalIndex].metadata = info; // 继承视频的元数据
+          updatedFiles[originalIndex].new_name = newFullName;
+        }
+      } else {
+        // 未找到匹配的视频文件，不进行重命名
+        const originalIndex = updatedFiles.findIndex(f => f.path === file.path);
+        if (originalIndex !== -1) {
+          // 将 new_name 设为 undefined，这样它就不会被处理
+          updatedFiles[originalIndex].new_name = undefined;
+        }
+        console.warn(`无法为字幕文件找到匹配的视频，将不进行重命名: ${file.name}`);
+      }
+    });
+
+    setFiles(updatedFiles);
+
+    // 5. 提供反馈
+    const videoCount = videoFiles.length;
+    const processedSidecarCount = sidecarFiles.filter(sf => {
+      const updatedFile = updatedFiles.find(uf => uf.path === sf.path);
+      return updatedFile && updatedFile.new_name;
+    }).length;
+    const orphanCount = sidecarFiles.length - processedSidecarCount;
     
-    toast.success(message);
+    let message = `已为 ${videoCount} 个视频文件和 ${processedSidecarCount} 个附加文件 (字幕/音频) 生成新名称。`;
+    if (orphanCount > 0) {
+      message += ` 有 ${orphanCount} 个附加文件因未找到匹配视频而未处理。`;
+      toast.warning(message);
+    } else {
+      toast.success(message);
+    }
     
     if (animeData.episodes && videoCount !== animeData.episodes) {
-      toast.warning(`注意：检测到${videoCount}个视频文件，但该动漫共有${animeData.episodes}集`);
+      toast.warning(`注意：检测到 ${videoCount} 个视频文件，但该动漫共有 ${animeData.episodes} 集`);
     }
   };
   
   // 选择不同的元数据结果
-  const selectAnimeMetadata = (animeId: number) => {
+  const selectAnimeMetadata = async (animeId: number) => {
     const selected = animeSearchResults.find(anime => anime.id === animeId);
     if (selected) {
       setSelectedAnimeId(animeId);
-      applyMetadata(selected);
+      await applyMetadata(selected);
     }
   };
   
@@ -745,7 +673,7 @@ function ImportPage() {
     try {
       // 检查硬链接能力
       const canHardlink = await invoke<boolean>('check_hardlink_capability', {
-        sourceDir: files[0].path.split(/[/\\]/).slice(0, -1).join('/'),
+        sourceDir: files[0].path.split(/[/\\\\]/).slice(0, -1).join('/'),
         targetDir: outputDir
       });
       
@@ -773,35 +701,42 @@ function ImportPage() {
         // 获取第一个有元数据的文件
         const fileWithMetadata = files.find(f => f.metadata);
         if (fileWithMetadata && fileWithMetadata.metadata) {
-          const animeInfo = fileWithMetadata.metadata;
-          
           // 处理每个文件
           files.forEach(file => {
-            if (file.new_name) {
+            if (file.new_name && file.metadata) { // 确保文件有新名称和元数据
               let targetPath = "";
-              
+              const currentAnimeInfo = file.metadata; // 使用文件自身的元数据
+
               // 如果启用创建动漫文件夹
               if (createAnimeFolders) {
                 let animeFolder = folderTemplate;
-                animeFolder = animeFolder.replace("{title}", animeInfo.title);
-                animeFolder = animeFolder.replace("{title_romaji}", animeInfo.title_romaji || animeInfo.title);
-                animeFolder = animeFolder.replace("{title_english}", animeInfo.title_english || animeInfo.title);
+                animeFolder = animeFolder.replace(/{title}/g, currentAnimeInfo.title);
+                animeFolder = animeFolder.replace(/{title_romaji}/g, currentAnimeInfo.title_romaji || currentAnimeInfo.title);
+                animeFolder = animeFolder.replace(/{title_english}/g, currentAnimeInfo.title_english || currentAnimeInfo.title);
                 
-                if (animeInfo.year) {
-                  animeFolder = animeFolder.replace("{year}", animeInfo.year.toString());
+                if (currentAnimeInfo.year) {
+                  animeFolder = animeFolder.replace(/{year}/g, currentAnimeInfo.year.toString());
                 } else {
-                  animeFolder = animeFolder.replace(" ({year})", "");
-                  animeFolder = animeFolder.replace("({year})", "");
+                  animeFolder = animeFolder.replace(/ \({year}\)/g, "").replace(/\({year}\)/g, "");
+                }
+
+                if (currentAnimeInfo.quarter) {
+                  animeFolder = animeFolder.replace(/{quarter}/g, currentAnimeInfo.quarter);
+                } else {
+                  animeFolder = animeFolder.replace(/ {quarter}/g, "").replace(/{quarter}/g, "");
                 }
                 
                 targetPath = animeFolder;
                 
                 // 如果按季度组织且有季度信息
-                if (organizeBySeasons && file.metadata?.season) {
+                if (organizeBySeasons && currentAnimeInfo.season) {
                   let seasonFolder = seasonFolderTemplate;
-                  seasonFolder = seasonFolder.replace("{season}", file.metadata.season.toString());
-                  seasonFolder = seasonFolder.replace("{season:02}", file.metadata.season.toString().padStart(2, '0'));
-                  seasonFolder = seasonFolder.replace("{season:03}", file.metadata.season.toString().padStart(3, '0'));
+                  seasonFolder = seasonFolder
+                    .replace(/{season}/g, String(currentAnimeInfo.season ?? ''))
+                    .replace(/{season:02}/g, String(currentAnimeInfo.season ?? '').padStart(2, '0'))
+                    .replace(/{season:03}/g, String(currentAnimeInfo.season ?? '').padStart(3, '0'))
+                    .replace(/{year}/g, currentAnimeInfo.year?.toString() || "")
+                    .replace(/{quarter}/g, currentAnimeInfo.quarter || "");
                   targetPath += `/${seasonFolder}`;
                 }
                 
@@ -810,10 +745,14 @@ function ImportPage() {
               } else {
                 // 不创建动漫文件夹，但可能创建季度文件夹
                 if (organizeBySeasons && file.metadata?.season) {
+                  const currentAnimeInfo = file.metadata;
                   let seasonFolder = seasonFolderTemplate;
-                  seasonFolder = seasonFolder.replace("{season}", file.metadata.season.toString());
-                  seasonFolder = seasonFolder.replace("{season:02}", file.metadata.season.toString().padStart(2, '0'));
-                  seasonFolder = seasonFolder.replace("{season:03}", file.metadata.season.toString().padStart(3, '0'));
+                  seasonFolder = seasonFolder
+                    .replace(/{season}/g, String(currentAnimeInfo.season ?? ''))
+                    .replace(/{season:02}/g, String(currentAnimeInfo.season ?? '').padStart(2, '0'))
+                    .replace(/{season:03}/g, String(currentAnimeInfo.season ?? '').padStart(3, '0'))
+                    .replace(/{year}/g, currentAnimeInfo.year?.toString() || "")
+                    .replace(/{quarter}/g, currentAnimeInfo.quarter || "");
                   targetPath = `${seasonFolder}/${file.new_name}`;
                 } else {
                   // 直接使用新文件名
@@ -875,7 +814,6 @@ function ImportPage() {
         ...config,
         output_directory: outputDir || config.output_directory,
         naming_template: fileNameTemplate,
-        subtitle_template: fileNameTemplate + subtitleSuffix,
         folder_template: folderTemplate,
         season_folder_template: seasonFolderTemplate,
         organize_by_season: organizeBySeasons
@@ -899,7 +837,7 @@ function ImportPage() {
   };
   
   // 更新文件名模板并应用到所有文件
-  const updateFileNameTemplate = (template: string) => {
+  const updateFileNameTemplate = async (template: string) => {
     setFileNameTemplate(template);
     
     // 自动保存配置
@@ -909,15 +847,9 @@ function ImportPage() {
     if (selectedAnimeId !== null) {
       const selected = animeSearchResults.find(anime => anime.id === selectedAnimeId);
       if (selected) {
-        applyMetadata(selected);
+        await applyMetadata(selected);
       }
     }
-  };
-
-  // 更新字幕后缀并自动保存
-  const updateSubtitleSuffix = (suffix: string) => {
-    setSubtitleSuffix(suffix);
-    autoSaveConfig({ subtitle_template: fileNameTemplate + suffix });
   };
 
   // 更新文件夹模板并自动保存
@@ -953,7 +885,6 @@ function ImportPage() {
         ...config,
         output_directory: outputDir || config.output_directory,
         naming_template: fileNameTemplate,
-        subtitle_template: fileNameTemplate + subtitleSuffix,
         folder_template: folderTemplate,
         season_folder_template: seasonFolderTemplate,
         organize_by_season: organizeBySeasons,
@@ -1137,7 +1068,7 @@ function ImportPage() {
             </Button>
           </div>
           
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium mb-2">视频文件名模板</label>
               <input
@@ -1149,20 +1080,6 @@ function ImportPage() {
               />
               <p className="text-xs text-muted-foreground mt-1">
                 视频文件命名模板
-              </p>
-            </div>
-            
-            <div>
-              <label className="block text-sm font-medium mb-2">字幕文件后缀</label>
-              <input
-                type="text"
-                value={subtitleSuffix}
-                onChange={(e) => updateSubtitleSuffix(e.target.value)}
-                className="w-full px-3 py-2 bg-gray-700 text-white border border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 placeholder-gray-400"
-                placeholder=".chs"
-              />
-              <p className="text-xs text-muted-foreground mt-1">
-                字幕文件后缀（将添加到视频文件名后）
               </p>
             </div>
             
@@ -1197,10 +1114,13 @@ function ImportPage() {
           
           <div className="mt-2">
             <p className="text-xs text-muted-foreground">
-              文件名变量: {"{title}, {title_romaji}, {title_english}, {episode}, {episode:02}, {episode:03}, {season}, {year}, {group}, {ext}"}
+              文件名变量: {"{title}, {title_romaji}, {title_english}, {episode}, {episode:02}, {episode:03}, {season}, {year}, {quarter}, {group}, {ext}, {episode_title}"}
             </p>
             <p className="text-xs text-muted-foreground mt-1">
-              季度文件夹变量: {"{season}, {season:02}, {season:03}"} (例如: Season {"{season}"} → Season 1, S{"{season:02}"} → S01)
+              文件夹变量: {"{title}, {title_romaji}, {title_english}, {year}, {quarter}"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-1">
+              季度文件夹变量: {"{season}, {season:02}, {season:03}, {year}, {quarter}"}
             </p>
           </div>
           
@@ -1285,6 +1205,7 @@ function ImportPage() {
               <Info className="h-4 w-4" />
               <span>视频: {files.filter(f => f.is_video).length}</span>
               <span>字幕: {files.filter(f => f.is_subtitle).length}</span>
+              <span>音频: {files.filter(f => f.is_audio).length}</span>
             </div>
           </div>
           
@@ -1294,8 +1215,12 @@ function ImportPage() {
                 <div className="flex-shrink-0">
                   {file.is_video ? (
                     <FileVideo className="h-5 w-5 text-blue-500" />
-                  ) : (
+                  ) : file.is_subtitle ? (
                     <FileText className="h-5 w-5 text-green-500" />
+                  ) : file.is_audio ? (
+                    <FileMusic className="h-5 w-5 text-purple-500" />
+                  ) : (
+                    <File className="h-5 w-5 text-gray-500" />
                   )}
                 </div>
                 

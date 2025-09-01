@@ -39,6 +39,7 @@ fn main() {
             parse_anime_filename,
             search_anilist,
             generate_filename,
+            get_anime_details,
             // 配置管理命令
             load_config,
             save_config,
