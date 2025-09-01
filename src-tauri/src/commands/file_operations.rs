@@ -194,14 +194,14 @@ fn sanitize_filename(filename: &str) -> String {
         sanitized = sanitized.replace(ch, "_");
     }
     
-    // 替换一些特殊Unicode字符
+    // 替换一些特殊Unicode字符，但保留用于兼容Windows文件名的全角标点
     sanitized = sanitized
         .replace('☆', "★")  // 替换空心星号为实心星号
         .replace('～', "~")  // 替换全角波浪号为半角
         .replace('＆', "&")  // 替换全角&为半角
         .replace('！', "!")  // 替换全角!为半角
-        .replace('？', "?")  // 替换全角?为半角
-        .replace('：', ":")  // 替换全角:为半角
+        // .replace('？', "?")  // 保留全角问号以兼容文件名
+        // .replace('：', ":")  // 保留全角冒号以兼容文件名
         .replace('；', ";")  // 替换全角;为半角
         .replace('，', ",")  // 替换全角,为半角
         .replace('。', ".")  // 替换全角.为半角
