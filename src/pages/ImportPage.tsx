@@ -471,11 +471,12 @@ function ImportPage() {
   
   // 提取文件名（不含扩展名）
   const getBaseName = (filename: string) => {
-    const parts = filename.split('.');
-    if (parts.length > 1) {
-      return parts.slice(0, -1).join('.');
+    const lastDotIndex = filename.lastIndexOf('.');
+    // 如果没有找到点，或者点是第一个字符（例如 .env 文件），则返回完整文件名
+    if (lastDotIndex <= 0) {
+      return filename;
     }
-    return filename;
+    return filename.substring(0, lastDotIndex);
   };
 
   // 替换Windows文件名中的非法字符为全角字符
