@@ -485,15 +485,13 @@ function ImportPage() {
       .replace(/:/g, '：')
       .replace(/\?/g, '？')
       .replace(/\*/g, '＊')
-      .replace(/"/g, '＂')
+      .replace(/\"/g, '＂')
       .replace(/</g, '＜')
       .replace(/>/g, '＞')
       .replace(/\|/g, '｜')
       .replace(/\//g, '／')
       .replace(/\\/g, '＼');
   };
-
-
 
   // 应用元数据到文件
   const applyMetadata = async (animeData: AniListResponse) => {
@@ -572,21 +570,23 @@ function ImportPage() {
       videoFileMap.set(originalBaseName, { info: animeInfo, newBaseName });
     }
 
-    // 4. 处理所有附加文件 (字幕和音频)
+    // 4. 处理所有附加文件 (字幕和音频) - 最终的健壮匹配逻辑
     sidecarFiles.forEach(file => {
-      const sidecarBaseName = getBaseName(file.name);
+      const sidecarBaseName = getBaseName(file.name).normalize().trim();
       let bestMatch: { info: AnimeInfo, newBaseName: string, languageSuffix: string, videoBaseName: string } | null = null;
 
-      // 遍历所有视频文件，找到最长的前缀匹配
+      // 遍历所有视频文件，找到最长的、有效的前缀匹配
       for (const [videoBaseName, videoData] of videoFileMap.entries()) {
-        if (sidecarBaseName.startsWith(videoBaseName)) {
-          const languageSuffix = sidecarBaseName.substring(videoBaseName.length);
+        const normalizedVideoBaseName = videoBaseName.normalize().trim();
+
+        if (sidecarBaseName.startsWith(normalizedVideoBaseName)) {
+          const languageSuffix = sidecarBaseName.substring(normalizedVideoBaseName.length);
           
-          // 检查后缀是否合法 (为空，或以点开头)
+          // 后缀必须为空（完全匹配）或以点开头（语言/标识符后缀）
           if (languageSuffix === '' || languageSuffix.startsWith('.')) {
-            // 如果是第一个匹配，或者当前匹配比之前的匹配更长（更具体），则更新
-            if (!bestMatch || videoBaseName.length > bestMatch.videoBaseName.length) {
-                 bestMatch = { ...videoData, languageSuffix, videoBaseName };
+            // 如果这是第一个匹配，或者当前匹配的视频基本名更长（更具体），则选择当前匹配
+            if (!bestMatch || normalizedVideoBaseName.length > bestMatch.videoBaseName.length) {
+                 bestMatch = { ...videoData, languageSuffix, videoBaseName: normalizedVideoBaseName };
             }
           }
         }
@@ -595,19 +595,17 @@ function ImportPage() {
       if (bestMatch) {
         const { info, newBaseName, languageSuffix } = bestMatch;
         
-        // languageSuffix 已经是类似 ".sc" 的格式了
         const newFullName = `${newBaseName}${languageSuffix}.${file.file_type}`;
         
         const originalIndex = updatedFiles.findIndex(f => f.path === file.path);
         if (originalIndex !== -1) {
-          updatedFiles[originalIndex].metadata = info; // 继承视频的元数据
+          updatedFiles[originalIndex].metadata = info;
           updatedFiles[originalIndex].new_name = newFullName;
         }
       } else {
         // 未找到匹配的视频文件，不进行重命名
         const originalIndex = updatedFiles.findIndex(f => f.path === file.path);
         if (originalIndex !== -1) {
-          // 将 new_name 设为 undefined，这样它就不会被处理
           updatedFiles[originalIndex].new_name = undefined;
         }
         console.warn(`无法为字幕文件找到匹配的视频，将不进行重命名: ${file.name}`);
