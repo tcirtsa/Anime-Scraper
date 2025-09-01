@@ -244,7 +244,7 @@ function ImportPage() {
       const selected = await open({
         multiple: true,
         filters: [
-          { name: '支持的文件', extensions: ['mkv', 'mp4', 'avi', 'mov', 'ass', 'srt', 'vtt', 'mka', 'flac', 'opus', 'aac'] }
+          { name: '支持的文件', extensions: ['mkv', 'mp4', 'avi', 'mov', 'ass', 'srt', 'ssa', 'vtt', 'mka', 'flac', 'opus', 'aac'] }
         ]
       });
       console.log('文件选择结果:', selected);
@@ -254,7 +254,7 @@ function ImportPage() {
           const name = path.split(/[/\\\\]/).pop() || '';
           const extension = name.split('.').pop()?.toLowerCase() || '';
           const is_video = ['mkv', 'mp4', 'avi', 'mov'].includes(extension);
-          const is_subtitle = ['ass', 'srt', 'vtt'].includes(extension);
+          const is_subtitle = ['ass', 'srt', 'ssa', 'vtt'].includes(extension);
           const is_audio = ['mka', 'flac', 'opus', 'aac'].includes(extension);
           
           return {
@@ -287,7 +287,7 @@ function ImportPage() {
     for (const file of fileList) {
       const extension = file.name.split('.').pop()?.toLowerCase() || '';
       const is_video = ['mkv', 'mp4', 'avi', 'mov'].includes(extension);
-      const is_subtitle = ['ass', 'srt', 'vtt'].includes(extension);
+      const is_subtitle = ['ass', 'srt', 'ssa', 'vtt'].includes(extension);
       const is_audio = ['mka', 'flac', 'opus', 'aac'].includes(extension);
       
       if (is_video || is_subtitle || is_audio) {
@@ -570,23 +570,23 @@ function ImportPage() {
       videoFileMap.set(originalBaseName, { info: animeInfo, newBaseName });
     }
 
-    // 4. 处理所有附加文件 (字幕和音频) - 最终的健壮匹配逻辑
+    // 4. 处理所有附加文件 (字幕和音频) - 修正后的最终匹配逻辑
     sidecarFiles.forEach(file => {
       const sidecarBaseName = getBaseName(file.name).normalize().trim();
-      let bestMatch: { info: AnimeInfo, newBaseName: string, languageSuffix: string, videoBaseName: string } | null = null;
+      let bestMatch: { info: AnimeInfo, newBaseName: string, languageSuffix: string, matchLength: number } | null = null;
 
-      // 遍历所有视频文件，找到最长的、有效的前缀匹配
+      // 遍历所有视频文件，为当前字幕文件找到最佳匹配
       for (const [videoBaseName, videoData] of videoFileMap.entries()) {
         const normalizedVideoBaseName = videoBaseName.normalize().trim();
 
         if (sidecarBaseName.startsWith(normalizedVideoBaseName)) {
           const languageSuffix = sidecarBaseName.substring(normalizedVideoBaseName.length);
           
-          // 后缀必须为空（完全匹配）或以点开头（语言/标识符后缀）
+          // 严格校验后缀：必须为空（完全匹配）或以点开头
           if (languageSuffix === '' || languageSuffix.startsWith('.')) {
-            // 如果这是第一个匹配，或者当前匹配的视频基本名更长（更具体），则选择当前匹配
-            if (!bestMatch || normalizedVideoBaseName.length > bestMatch.videoBaseName.length) {
-                 bestMatch = { ...videoData, languageSuffix, videoBaseName: normalizedVideoBaseName };
+            // 如果这是第一个匹配，或者当前匹配更长（更具体），则更新
+            if (!bestMatch || normalizedVideoBaseName.length > bestMatch.matchLength) {
+              bestMatch = { ...videoData, languageSuffix, matchLength: normalizedVideoBaseName.length };
             }
           }
         }
@@ -594,7 +594,6 @@ function ImportPage() {
 
       if (bestMatch) {
         const { info, newBaseName, languageSuffix } = bestMatch;
-        
         const newFullName = `${newBaseName}${languageSuffix}.${file.file_type}`;
         
         const originalIndex = updatedFiles.findIndex(f => f.path === file.path);
@@ -603,12 +602,12 @@ function ImportPage() {
           updatedFiles[originalIndex].new_name = newFullName;
         }
       } else {
-        // 未找到匹配的视频文件，不进行重命名
+        // 未找到匹配，标记为不处理
         const originalIndex = updatedFiles.findIndex(f => f.path === file.path);
         if (originalIndex !== -1) {
           updatedFiles[originalIndex].new_name = undefined;
         }
-        console.warn(`无法为字幕文件找到匹配的视频，将不进行重命名: ${file.name}`);
+        console.warn(`无法为附加文件找到匹配的视频: ${file.name}`);
       }
     });
 
